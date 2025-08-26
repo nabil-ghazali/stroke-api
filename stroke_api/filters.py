@@ -1,6 +1,6 @@
 from typing import Optional
 import pandas as pd
-
+import numpy as np
 
 # Chargement des données (une fois)
 stroke_data_df = pd.read_parquet("stroke_api/data/hearth_data.parquet")
@@ -98,215 +98,112 @@ def filter_patient_id(id: int) -> dict:
     return result.to_dict('records')
    
 
-def stat_patients ():
+def stat_patients():
+    """
+    Calcule des statistiques globales sur le jeu de données stroke_data_df.
 
-   df = stroke_data_df.copy()
+    Retour
+    ------
+    dict : {
+        "total_patients": int,
+        "avg_age": float,
+        "age_min": float,
+        "age_max": float,
+        "age_std": float,
+        "stroke_rate": float,  # en %
+        "stroke_counts": dict,
+        "gender_distribution": dict,
+        "gender_stroke": list of dicts,
+        "stroke_by_gender": dict,
+        "smoking_stroke": list of dicts,
+        "stroke_by_smoking": dict
+    }
+    """
+    df = stroke_data_df.copy()
 
-   total_patients = len(df)
-   if total_patients == 0:
-      return {"message": "Aucun patient trouvé avec ces critères."}
-   
-   #Moyenne d'age en pourcentage
-   avg_age = round(df["age"].mean(), 2)
+    total_patients = len(df)
+    if total_patients == 0:
+        return {"message": "Aucun patient trouvé."}
 
-   #Moyenne d'AVC en pourcentage
-   stroke_rate = round(df["stroke"].mean() * 100, 2)  # en pourcentage
+    # Statistiques sur l'âge
+    avg_age = round(df["age"].mean(), 2)
+    age_min = round(df["age"].min(), 2)
+    age_max = round(df["age"].max(), 2)
+    age_std = round(df["age"].std(), 2)
 
-   # Grouper par 'gender' 
-   gender_distribution = df["gender"].value_counts().to_dict()
+    # Répartition AVC
+    stroke_rate = round(df["stroke"].mean() * 100, 2)
+    stroke_counts = df["stroke"].value_counts().to_dict()
+    stroke_0 = stroke_counts.get(0, 0)
+    stroke_1 = stroke_counts.get(1, 0)
 
-   # Grouper par 'gender' et 'smoking_status'
-   gender_stroke_counts = (
-    df.groupby(["gender", "stroke"])
-      .size()
-      .reset_index(name="count")
-      .to_dict(orient="records")
-   )
-   # Grouper par 'stroke' et 'smoking_status'
-   smoking_stroke = (
-      df.groupby(['smoking_status', 'stroke'])
-      .size()
-      .reset_index(name='count')
-      .to_dict(orient='records')
-   )
+    # Répartition par genre
+    gender_distribution = df["gender"].value_counts().to_dict()
 
-   #  Retour des données
-   return {
+    # Répartition AVC par genre avec pourcentage
+    gender_stroke_counts = (
+        df.groupby(["gender", "stroke"])
+        .size()
+        .reset_index(name="count")
+    )
+    gender_stroke_counts["percent"] = round(gender_stroke_counts["count"] / total_patients * 100, 2)
+    gender_stroke_counts = gender_stroke_counts.to_dict(orient="records")
+
+    # Taux d'AVC par genre
+    stroke_by_gender = (
+        df.groupby("gender")["stroke"]
+        .mean()
+        .mul(100)
+        .round(2)
+        .to_dict()
+    )
+
+    # Répartition AVC par statut tabac avec pourcentage
+    smoking_stroke = (
+        df.groupby(["smoking_status", "stroke"])
+        .size()
+        .reset_index(name="count")
+    )
+    smoking_stroke["percent"] = round(smoking_stroke["count"] / total_patients * 100, 2)
+    smoking_stroke = smoking_stroke.to_dict(orient="records")
+
+    # Taux d'AVC par statut tabac
+    stroke_by_smoking = (
+        df.groupby("smoking_status")["stroke"]
+        .mean()
+        .mul(100)
+        .round(2)
+        .to_dict()
+    )
+
+    # Taux d'AVC par BMI
+    df["bmi_category"] = pd.cut(
+    df["bmi"],
+    bins=[0, 18.5, 24.9, 29.9, np.inf],
+    labels=["Sous poids", "Normal", "Surpoids", "Obésite"]
+    ).round()
+
+    stroke_by_bmi = (
+      df.groupby("bmi_category", observed=True)["stroke"]  # On groupe par BMI
+      .mean()                      # Moyenne = proportion de 1 (AVC)
+      .mul(100)                    # On multiplie par 100 pour avoir un %
+      .reset_index()
+      .to_dict()                   # Conversion en dictionnaire
+
+    )
+
+    return {
         "total_patients": total_patients,
-        "average_age": avg_age,
-        "stroke_rate_percent": stroke_rate,
+        "avg_age": avg_age,
+        "age_min": age_min,
+        "age_max": age_max,
+        "age_std": age_std,
+        "stroke_rate": stroke_rate,
+        "stroke_counts": {"Pas d'AVC": stroke_0, "AVC": stroke_1},
         "gender_distribution": gender_distribution,
-        "gender_stroke" : gender_stroke_counts,
-        "smoking_stroke" : smoking_stroke
-
-   }
-
-
-
-def complex_stat_patients(
-    max_age: Optional[float] = None,
-    gender: Optional[str] = None,
-    stroke: Optional[int] = None,
-    smoking_status: Optional[str] = None
-) -> dict:
-    """
-    Statistiques dynamiques selon les paramètres fournis.
-    Voir le README inline pour description des comportements selon combinaisons.
-    """
-    try:
-        df = stroke_data_df.copy()
-
-        # --- Filtrage de base (max_age) ---
-        if max_age is not None:
-            df = df[df["age"] <= float(max_age)]
-
-        # Normaliser les colonnes textuelles pour éviter les soucis de casse
-        if "gender" in df.columns:
-            df["gender"] = df["gender"].fillna("").astype(str)
-        if "smoking_status" in df.columns:
-            df["smoking_status"] = df["smoking_status"].fillna("").astype(str)
-
-        # --- Cas où stroke est fourni (on veut des comptes/roupements sur stroke) ---
-        if stroke is not None:
-            # Sous-ensemble des lignes correspondant à la valeur de stroke demandée
-            df_stroke = df[df["stroke"] == int(stroke)]
-
-            # Si seul stroke est fourni -> moyenne (taux d'AVC) sur le (sous-)ensemble
-            if gender is None and smoking_status is None:
-                stroke_rate = round(float(df["stroke"].mean()) * 100, 2)
-                return {
-                    "mode": "stroke_only",
-                    "stroke_value": int(stroke),
-                    "stroke_rate_percent": stroke_rate,
-                    "total_patients_considered": int(len(df))
-                }
-
-            # stroke + gender (regarder la répartition par genre pour ce stroke)
-            if gender is not None and smoking_status is None:
-                # counts par gender pour le stroke demandé
-                by_gender = (
-                    df_stroke.groupby("gender")
-                             .size()
-                             .reset_index(name="count")
-                             .to_dict(orient="records")
-                )
-                for r in by_gender:
-                    r["count"] = int(r["count"])
-
-                # stats détaillées pour le genre demandé (filtres sur ce genre)
-                df_gender = df[df["gender"].str.lower() == gender.lower()]
-                total_gender = int(len(df_gender))
-                gender_stroke_rate = (
-                    round(float(df_gender["stroke"].mean()) * 100, 2)
-                    if total_gender > 0 else None
-                )
-                avg_age_gender = round(float(df_gender["age"].mean()), 2) if total_gender > 0 else None
-
-                return {
-                    "mode": "stroke_and_gender",
-                    "stroke_value": int(stroke),
-                    "counts_by_gender_for_this_stroke": by_gender,
-                    "requested_gender": gender,
-                    "requested_gender_total": total_gender,
-                    "requested_gender_stroke_rate_percent": gender_stroke_rate,
-                    "requested_gender_average_age": avg_age_gender
-                }
-
-            # stroke + smoking_status (counts par smoking_status)
-            if smoking_status is not None and gender is None:
-                by_smoke = (
-                    df_stroke.groupby("smoking_status")
-                             .size()
-                             .reset_index(name="count")
-                             .to_dict(orient="records")
-                )
-                for r in by_smoke:
-                    r["count"] = int(r["count"])
-                return {
-                    "mode": "stroke_and_smoking_status",
-                    "stroke_value": int(stroke),
-                    "counts_by_smoking_status": by_smoke
-                }
-
-            # stroke + both gender AND smoking_status -> group by (gender, smoking_status)
-            if gender is not None and smoking_status is not None:
-                by_both = (
-                    df_stroke.groupby(["gender", "smoking_status"])
-                             .size()
-                             .reset_index(name="count")
-                             .to_dict(orient="records")
-                )
-                for r in by_both:
-                    r["count"] = int(r["count"])
-                return {
-                    "mode": "stroke_gender_smoking",
-                    "stroke_value": int(stroke),
-                    "counts_by_gender_and_smoking_status": by_both
-                }
-
-        # --- Cas où stroke n'est PAS fourni : stats filtrées ou globales ---
-        # gender seul -> stats pour ce genre
-        if gender is not None and stroke is None and smoking_status is None:
-            df_gender = df[df["gender"].str.lower() == gender.lower()]
-            total = int(len(df_gender))
-            return {
-                "mode": "gender_only",
-                "gender": gender,
-                "total": total,
-                "average_age": round(float(df_gender["age"].mean()), 2) if total>0 else None,
-                "stroke_rate_percent": round(float(df_gender["stroke"].mean()) * 100, 2) if total>0 else None,
-                "smoking_status_counts": df_gender["smoking_status"].value_counts().to_dict()
-            }
-
-        # smoking_status seul -> stats pour ce groupe
-        if smoking_status is not None and stroke is None and gender is None:
-            df_smoke = df[df["smoking_status"].str.lower() == smoking_status.lower()]
-            total = int(len(df_smoke))
-            return {
-                "mode": "smoking_only",
-                "smoking_status": smoking_status,
-                "total": total,
-                "average_age": round(float(df_smoke["age"].mean()), 2) if total>0 else None,
-                "stroke_rate_percent": round(float(df_smoke["stroke"].mean()) * 100, 2) if total>0 else None
-            }
-
-        # Aucune option précise -> stats globales
-        total_patients = int(len(df))
-        if total_patients == 0:
-            return {"message": "Aucun patient trouvé avec ces critères."}
-
-        avg_age = round(float(df["age"].mean()), 2)
-        stroke_rate = round(float(df["stroke"].mean()) * 100, 2)
-        gender_distribution = {k: int(v) for k, v in df["gender"].value_counts().to_dict().items()}
-        gender_stroke = (
-            df.groupby(["gender", "stroke"])
-              .size()
-              .reset_index(name="count")
-              .to_dict(orient="records")
-        )
-        for r in gender_stroke: r["count"] = int(r["count"])
-        smoking_stroke = (
-            df.groupby(["smoking_status", "stroke"])
-              .size()
-              .reset_index(name="count")
-              .to_dict(orient="records")
-        )
-        for r in smoking_stroke: r["count"] = int(r["count"])
-
-        women_with_stroke = int(df[(df["gender"].str.lower() == "female") & (df["stroke"] == 1)].shape[0])
-
-        return {
-            "mode": "global",
-            "total_patients": total_patients,
-            "average_age": avg_age,
-            "stroke_rate_percent": stroke_rate,
-            "gender_distribution": gender_distribution,
-            "gender_stroke": gender_stroke,
-            "smoking_stroke": smoking_stroke,
-            "women_with_stroke": women_with_stroke
-        }
-
-    except Exception as e:
-        # log + convertir en erreur FastAPI (si tu appelles depuis une route)
-        print(f"Erreur dans stat_patients(): {e}")
-        raise HTTPException(status_code=500, detail="Erreur interne lors du calcul des statistiques")
+        "gender_stroke": gender_stroke_counts,
+        "stroke_by_gender": stroke_by_gender,
+        "smoking_stroke": smoking_stroke,
+        "stroke_by_smoking": stroke_by_smoking,
+        "stroke_by_bmi": stroke_by_bmi
+    }

@@ -30,6 +30,8 @@ def get_patients(
     - Liste des patients correspondant aux critères sous forme de dictionnaires.
     """
     filtered_df = filters.filter_patient(gender=gender, stroke=stroke, max_age=max_age)
+    print("DEBUG type:", type(filtered_df))
+
     return filtered_df
 
 # Route pour récupérer un patient par son ID
@@ -132,30 +134,3 @@ def stats():
         )
 
 
-@router.get("/patients/stats/detail")
-def stats(
-    max_age: Optional[float] = Query(None, description="Âge maximal"),
-    gender: Optional[str] = Query(None, description="Genre (male/female)"),
-    stroke: Optional[int] = Query(None, description="1 pour AVC, 0 sinon"),
-    smoking_status: Optional[str] = Query(None, description="Statut de tabagisme : Never smoked | formerly smoked | never smoked | smokes | Unknown")   
-
-):
-    """
-    Retourne des statistiques filtrées selon les critères choisis.
-    - max_age : âge maximum des patients à considérer
-    - gender : 'male' ou 'female'
-    - stroke : 1 ou 0
-    - smoking_status : ex. 'formerly smoked', 'never smoked'
-    """
-
-    try:
-        stat_df = filters.complex_stat_patients(
-            max_age=max_age,
-            gender=gender,
-            stroke=stroke,
-            smoking_status=smoking_status
-        )
-        return stat_df
-    except Exception as e:
-        print(f"Erreur dans stats(): {e}")
-        raise HTTPException(status_code=500, detail="Erreur interne lors du calcul des statistiques")
